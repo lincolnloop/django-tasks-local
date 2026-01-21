@@ -13,7 +13,10 @@ for true background execution, plus Server-Sent Events for progress streaming.
 """
 
 import json
+import logging
 import time
+
+logging.basicConfig(level=logging.DEBUG)
 
 from django.core.cache import cache
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse

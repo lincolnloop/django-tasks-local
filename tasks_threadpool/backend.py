@@ -23,6 +23,7 @@ import uuid
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
@@ -36,6 +37,24 @@ logger = logging.getLogger(__name__)
 
 # Context variable for tasks to access their own result ID
 current_result_id: ContextVar[str] = ContextVar("current_result_id")
+
+
+@dataclass
+class _BackendState:
+    """Shared state for a ThreadPoolBackend instance."""
+
+    executor: ThreadPoolExecutor
+    results: dict[str, TaskResult]
+    completed_ids: deque[str]
+    lock: Lock
+    max_results: int
+
+
+# Module-level registry of backend state, keyed by alias.
+# This ensures all backend instances for the same alias share state,
+# even when Django creates separate instances per thread.
+_backend_states: dict[str, _BackendState] = {}
+_registry_lock = Lock()
 
 
 class ThreadPoolBackend(BaseTaskBackend):
@@ -60,12 +79,28 @@ class ThreadPoolBackend(BaseTaskBackend):
         """
         super().__init__(alias, params)
         options = params.get("OPTIONS", {})
-        self._max_workers = options.get("MAX_WORKERS", 10)
-        self._max_results = options.get("MAX_RESULTS", 1000)
-        self._executor = ThreadPoolExecutor(max_workers=self._max_workers)
-        self._results = {}  # In-memory store: result_id -> TaskResult
-        self._completed_ids = deque()  # Track completion order for eviction
-        self._lock = Lock()  # Protects _results and _completed_ids
+        max_workers = options.get("MAX_WORKERS", 10)
+        max_results = options.get("MAX_RESULTS", 1000)
+
+        # Get or create shared state for this alias
+        with _registry_lock:
+            if alias not in _backend_states:
+                _backend_states[alias] = _BackendState(
+                    executor=ThreadPoolExecutor(max_workers=max_workers),
+                    results={},
+                    completed_ids=deque(),
+                    lock=Lock(),
+                    max_results=max_results,
+                )
+                logger.debug(
+                    "ThreadPoolBackend '%s' initialized: max_workers=%d, max_results=%d, executor=%s",
+                    alias,
+                    max_workers,
+                    max_results,
+                    id(_backend_states[alias].executor),
+                )
+
+        self._state = _backend_states[alias]
 
     def _update_result(
         self,
@@ -82,10 +117,11 @@ class ThreadPoolBackend(BaseTaskBackend):
 
         Returns the updated result, or None if the result doesn't exist.
         """
-        with self._lock:
-            if result_id not in self._results:
+        state = self._state
+        with state.lock:
+            if result_id not in state.results:
                 return None
-            old = self._results[result_id]
+            old = state.results[result_id]
             result = TaskResult(
                 id=old.id,
                 task=old.task,
@@ -105,9 +141,9 @@ class ThreadPoolBackend(BaseTaskBackend):
             if return_value is not None:
                 # TaskResult is frozen, use object.__setattr__ to set _return_value
                 object.__setattr__(result, "_return_value", return_value)
-            self._results[result_id] = result
+            state.results[result_id] = result
             if completed:
-                self._completed_ids.append(result_id)
+                state.completed_ids.append(result_id)
                 self._evict_oldest()
             return result
 
@@ -151,10 +187,11 @@ class ThreadPoolBackend(BaseTaskBackend):
             )
 
     def _evict_oldest(self) -> None:
-        """Remove oldest completed results if over limit. Must hold _lock."""
-        while len(self._completed_ids) > self._max_results:
-            old_id = self._completed_ids.popleft()
-            self._results.pop(old_id, None)
+        """Remove oldest completed results if over limit. Must hold state.lock."""
+        state = self._state
+        while len(state.completed_ids) > state.max_results:
+            old_id = state.completed_ids.popleft()
+            state.results.pop(old_id, None)
 
     def enqueue(
         self,
@@ -186,23 +223,31 @@ class ThreadPoolBackend(BaseTaskBackend):
             worker_ids=[],
         )
 
-        with self._lock:
-            self._results[result.id] = result
+        state = self._state
+        with state.lock:
+            state.results[result.id] = result
 
         # Submit to thread pool - worker may start immediately
-        self._executor.submit(self._execute_task, result.id, task)
+        state.executor.submit(self._execute_task, result.id, task)
+        logger.debug(
+            "Task '%s' enqueued: result_id=%s, executor=%s",
+            task.name,
+            result.id,
+            id(state.executor),
+        )
 
         # Return latest status (may have changed to RUNNING if worker started)
-        with self._lock:
-            return self._results.get(result.id, result)
+        with state.lock:
+            return state.results.get(result.id, result)
 
     def get_result(self, result_id: str) -> TaskResult:
         """Retrieve a task result by ID."""
-        with self._lock:
-            if result_id not in self._results:
+        state = self._state
+        with state.lock:
+            if result_id not in state.results:
                 raise TaskResultDoesNotExist(result_id)
-            return self._results[result_id]
+            return state.results[result_id]
 
     def close(self) -> None:
         """Shut down the thread pool. Cancels queued tasks, waits for running ones."""
-        self._executor.shutdown(wait=True, cancel_futures=True)
+        self._state.executor.shutdown(wait=True, cancel_futures=True)

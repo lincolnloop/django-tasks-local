@@ -108,27 +108,52 @@ def default_backend():
 @pytest.fixture(autouse=True)
 def clear_globals():
     """Clear global state between tests."""
+    from tasks_threadpool.backend import _backend_states
+
     _received_args.clear()
     _captured_result_id.clear()
+    # Clear shared backend state to ensure fresh state per test
+    _backend_states.clear()
     yield
 
 
 class TestBackendInitialization:
     def test_default_options(self, default_backend):
         """Backend uses sensible defaults when no options provided."""
-        assert default_backend._max_results == 1000
-        assert default_backend._executor._max_workers == 10
+        assert default_backend._state.max_results == 1000
+        assert default_backend._state.executor._max_workers == 10
 
     def test_custom_options(self, backend):
         """Backend respects custom MAX_WORKERS and MAX_RESULTS."""
-        assert backend._max_results == 5
-        assert backend._executor._max_workers == 2
+        assert backend._state.max_results == 5
+        assert backend._state.executor._max_workers == 2
 
     def test_capability_flags(self, backend):
         """Backend advertises correct capabilities."""
         assert backend.supports_defer is False
         assert backend.supports_async_task is False
         assert backend.supports_get_result is True
+
+    def test_multiple_instances_share_state(self):
+        """Multiple backend instances with same alias share executor and results."""
+        backend1 = ThreadPoolBackend(
+            alias="shared", params={"OPTIONS": {"MAX_WORKERS": 2}}
+        )
+        backend2 = ThreadPoolBackend(
+            alias="shared", params={"OPTIONS": {"MAX_WORKERS": 2}}
+        )
+
+        # Should share the same state object
+        assert backend1._state is backend2._state
+        assert backend1._state.executor is backend2._state.executor
+
+        # Enqueue on one, retrieve from the other
+        result = backend1.enqueue(simple_task)
+        time.sleep(0.1)
+        retrieved = backend2.get_result(result.id)
+        assert retrieved.id == result.id
+
+        backend1.close()
 
 
 class TestEnqueue:
@@ -232,7 +257,7 @@ class TestClose:
         backend.enqueue(long_running_task)
         backend.close()
 
-        assert backend._executor._shutdown
+        assert backend._state.executor._shutdown
 
 
 class TestConcurrency:
