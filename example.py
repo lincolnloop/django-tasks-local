@@ -74,15 +74,55 @@ def event_stream(client_id):
 
 
 # 3. The Views
+def get_client_id(request):
+    """Get or create a client ID from cookies."""
+    client_id = request.COOKIES.get("client_id")
+    if not client_id:
+        client_id = str(__import__("uuid").uuid4())
+    return client_id
+
+
+def get_jobs_for_client(client_id):
+    """Get incomplete jobs for a client with their current progress."""
+    from django.tasks import default_task_backend
+    from django.tasks.exceptions import TaskResultDoesNotExist
+
+    job_ids = cache.get(f"client:{client_id}", set())
+    jobs = []
+    for job_id in job_ids:
+        progress = cache.get(f"job:{job_id}") or 0
+        if progress < 100:
+            status = "RUNNING" if progress > 0 else "READY"
+            # Get enqueued_at from the task result
+            try:
+                result = default_task_backend.get_result(job_id)
+                enqueued_at = result.enqueued_at.timestamp()
+            except TaskResultDoesNotExist:
+                enqueued_at = 0
+            jobs.append({
+                "id": job_id,
+                "progress": progress,
+                "status": status,
+                "enqueued_at": enqueued_at,
+            })
+    # Sort by enqueue time (oldest first)
+    jobs.sort(key=lambda j: j["enqueued_at"])
+    return jobs
+
+
 @app.route("/")
 def index(request):
-    return app.render(request, "index.html")
+    client_id = get_client_id(request)
+    jobs = get_jobs_for_client(client_id)
+    response = app.render(request, "index.html", {"jobs_json": json.dumps(jobs)})
+    response.set_cookie("client_id", client_id, max_age=86400)  # 24 hours
+    return response
 
 
 @app.route("/start-job")
 def start_job(request):
     """Starts a background job using Django tasks and returns its ID"""
-    client_id = request.GET.get("client_id")
+    client_id = request.COOKIES.get("client_id")
 
     # Enqueue the task - Django assigns it a unique result ID
     result = tough_job.enqueue()
@@ -99,7 +139,7 @@ def start_job(request):
 @app.route("/events")
 def events(request):
     """SSE endpoint for job progress updates (multiplexed by client)"""
-    client_id = request.GET.get("client_id", "")
+    client_id = request.COOKIES.get("client_id", "")
     if not cache.get(f"client:{client_id}"):
         return HttpResponse("No jobs", status=400)
     response = StreamingHttpResponse(
@@ -122,11 +162,11 @@ app.templates["index.html"] = """
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <style>[x-cloak] { display: none !important; }</style>
+    <script>window.initialJobs = {{ jobs_json|safe }};</script>
 </head>
 <body>
     <main class="container" x-data="{
-        clientId: crypto.randomUUID(),
-        jobs: [],
+        jobs: window.initialJobs,
         get queued() { return this.jobs.filter(j => j.status === 'READY') },
         get running() { return this.jobs.filter(j => j.status === 'RUNNING' && j.progress < 100 && !j.error) },
         get complete() { return this.jobs.filter(j => j.progress >= 100) },
@@ -138,28 +178,36 @@ app.templates["index.html"] = """
             if (job.status === 'READY') return 'Queued...';
             return 'Starting...';
         },
+        init() {
+            // Reconnect SSE if there are incomplete jobs
+            if (this.jobs.some(j => j.progress < 100)) {
+                this.connectSSE();
+            }
+        },
+        connectSSE() {
+            if (evtSource) return;
+            evtSource = new EventSource('/events');
+            evtSource.onmessage = (e) => {
+                for (const [id, progress] of Object.entries(JSON.parse(e.data))) {
+                    const job = this.jobs.find(j => j.id === id);
+                    if (job) {
+                        job.progress = progress;
+                        if (progress > 0) job.status = 'RUNNING';
+                    }
+                }
+            };
+            evtSource.onerror = () => {
+                this.running.forEach(j => j.error = 'Connection lost');
+                evtSource?.close();
+                evtSource = null;
+            };
+        },
         async startJob() {
             try {
-                const res = await fetch('/start-job?client_id=' + this.clientId);
+                const res = await fetch('/start-job');
                 const { job_id, status } = await res.json();
                 this.jobs.push({ id: job_id, status, progress: 0 });
-                if (!evtSource) {
-                    evtSource = new EventSource('/events?client_id=' + this.clientId);
-                    evtSource.onmessage = (e) => {
-                        for (const [id, progress] of Object.entries(JSON.parse(e.data))) {
-                            const job = this.jobs.find(j => j.id === id);
-                            if (job) {
-                                job.progress = progress;
-                                if (progress > 0) job.status = 'RUNNING';
-                            }
-                        }
-                    };
-                    evtSource.onerror = () => {
-                        this.running.forEach(j => j.error = 'Connection lost');
-                        evtSource?.close();
-                        evtSource = null;
-                    };
-                }
+                this.connectSSE();
             } catch {
                 // Failed to start job
             }
