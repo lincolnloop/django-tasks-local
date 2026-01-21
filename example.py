@@ -168,7 +168,11 @@ app.templates["index.html"] = """
     <title>Django 6 Tasks + SSE Demo</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <style>[x-cloak] { display: none !important; }</style>
+    <style>
+        [x-cloak] { display: none !important; }
+        button { transition: background 0.3s ease; }
+        .error-flash { background: var(--pico-del-color); }
+    </style>
     <script>window.initialJobs = {{ jobs_json|safe }};</script>
 </head>
 <body>
@@ -212,11 +216,17 @@ app.templates["index.html"] = """
         async startJob() {
             try {
                 const res = await fetch('/start-job');
+                if (!res.ok) throw new Error('Server error');
                 const { job_id, status } = await res.json();
                 this.jobs.push({ id: job_id, status, progress: 0 });
                 this.connectSSE();
             } catch {
-                // Failed to start job
+                this.$el.classList.add('error-flash');
+                this.$el.dataset.tooltip = 'Failed to start job';
+                setTimeout(() => {
+                    this.$el.classList.remove('error-flash');
+                    delete this.$el.dataset.tooltip;
+                }, 1000);
             }
         }
     }">
