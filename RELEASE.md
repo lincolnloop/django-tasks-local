@@ -1,19 +1,27 @@
 # Releasing
 
-To roll a release, make sure you have your PyPI credentials in your keyring and that you have the ``keyring`` tool installed.
+## Development Setup
+
+Install pre-commit hooks to catch formatting errors before committing:
+
+```bash
+uv run pre-commit install
+```
 
 ## Publishing to PyPI
+
+Requires PyPI credentials in your keyring (see below).
 
 Tag the current release and push it:
 
 ```bash
 git pull
-git --no-pager tag --list "v*"
+git tag --list "v*"
 git tag -a vX.Y.Z -m "Release vX.Y.Z"
 git push --tags
 ```
 
-Then run:
+Build and publish:
 
 ```bash
 rm -rf dist
@@ -21,19 +29,18 @@ uv build
 uv publish
 ```
 
+## PyPI Credentials Setup
 
-## Adding your credentials to the keyring
-
-Install keyring (used by uv for publishing) and set your credentials:
+Install keyring (used by uv for publishing) and set your token:
 
 ```bash
 uv tool install keyring
 keyring set 'https://upload.pypi.org/legacy/' __token__
 ```
 
-Next, add these environment variables:
+Add these environment variables to your shell:
 
-```
-UV_KEYRING_PROVIDER=subprocess
-UV_PUBLISH_USERNAME=__token__
+```bash
+export UV_KEYRING_PROVIDER=subprocess
+export UV_PUBLISH_USERNAME=__token__
 ```
