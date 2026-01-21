@@ -77,7 +77,7 @@ def quick():
 
 
 @task
-def slow_task():
+def long_running_task():
     time.sleep(1)
 
 
@@ -229,7 +229,7 @@ class TestEviction:
 class TestClose:
     def test_close_shuts_down_executor(self, backend):
         """close() shuts down the thread pool."""
-        backend.enqueue(slow_task)
+        backend.enqueue(long_running_task)
         backend.close()
 
         assert backend._executor._shutdown
