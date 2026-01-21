@@ -1,0 +1,54 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "django-tasks-threadpool"
+dynamic = ["version"]
+description = "A thread pool backend for Django 6 tasks"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Chris Beaven", email = "smileychris@gmail.com" },
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: Django",
+    "Framework :: Django :: 6.0",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "django>=6.0",
+]
+
+[project.license]
+text = "MIT"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+]
+docs = [
+    "zensical",
+]
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.version]
+source = "scm"
+fallback_version = "0.0.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[project.urls]
+Homepage = "https://github.com/lincolnloop/django-tasks-threadpool"
+Documentation = "https://lincolnloop.github.io/django-tasks-threadpool/"
