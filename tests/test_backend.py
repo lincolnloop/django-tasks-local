@@ -92,6 +92,24 @@ def increment():
     return 1
 
 
+@task
+def no_return_value():
+    """Task that doesn't return anything."""
+    pass
+
+
+@task
+def fail_with_runtime_error():
+    """Task that raises a different exception type."""
+    raise RuntimeError("something went wrong")
+
+
+@task
+def return_unpickleable():
+    """Task that returns something that can't be pickled."""
+    return lambda x: x  # lambdas can't be pickled
+
+
 @pytest.fixture
 def backend():
     """Create a fresh backend instance for each test."""
@@ -157,6 +175,34 @@ class TestBackendInitialization:
 
         backend1.close()
 
+    def test_different_aliases_isolated(self):
+        """Backend instances with different aliases have separate state."""
+        backend_a = ThreadPoolBackend(
+            alias="backend_a", params={"OPTIONS": {"MAX_WORKERS": 2}}
+        )
+        backend_b = ThreadPoolBackend(
+            alias="backend_b", params={"OPTIONS": {"MAX_WORKERS": 2}}
+        )
+
+        try:
+            # Should have different state
+            assert backend_a._state is not backend_b._state
+
+            # Enqueue on A
+            result = backend_a.enqueue(simple_task)
+            time.sleep(0.1)
+
+            # Should be retrievable from A
+            retrieved = backend_a.get_result(result.id)
+            assert retrieved.id == result.id
+
+            # Should NOT be found in B
+            with pytest.raises(TaskResultDoesNotExist):
+                backend_b.get_result(result.id)
+        finally:
+            backend_a.close()
+            backend_b.close()
+
 
 class TestEnqueue:
     def test_enqueue_returns_result(self, backend):
@@ -193,6 +239,15 @@ class TestTaskExecution:
         updated = backend.get_result(result.id)
         assert updated.status == TaskResultStatus.SUCCESSFUL
         assert updated.return_value == 5
+
+    def test_task_with_no_return_value(self, backend):
+        """Task that doesn't return anything has None as return_value."""
+        result = backend.enqueue(no_return_value)
+        time.sleep(0.1)
+
+        updated = backend.get_result(result.id)
+        assert updated.status == TaskResultStatus.SUCCESSFUL
+        assert updated.return_value is None
 
     def test_failing_task(self, backend):
         """Failed task updates status and stores error info."""
@@ -326,3 +381,26 @@ class TestProcessPoolBackend:
         assert process_backend.supports_async_task is False
         assert process_backend.supports_get_result is True
         assert process_backend.supports_priority is False
+
+    def test_failing_task(self, process_backend):
+        """ProcessPoolBackend handles task failures correctly."""
+        result = process_backend.enqueue(fail)
+        time.sleep(0.5)  # ProcessPool is slower
+
+        updated = process_backend.get_result(result.id)
+        assert updated.status == TaskResultStatus.FAILED
+        assert len(updated.errors) == 1
+        assert "ValueError" in updated.errors[0].exception_class_path
+        assert "intentional error" in updated.errors[0].traceback
+
+    def test_unpickleable_return_value(self, process_backend):
+        """ProcessPoolBackend handles unpickleable return values gracefully."""
+        result = process_backend.enqueue(return_unpickleable)
+        time.sleep(0.5)
+
+        updated = process_backend.get_result(result.id)
+        # Task should fail because result can't be pickled back to main process
+        assert updated.status == TaskResultStatus.FAILED
+        assert len(updated.errors) == 1
+        # The error should mention pickling
+        assert "pickle" in updated.errors[0].traceback.lower()
