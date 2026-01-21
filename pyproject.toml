@@ -50,5 +50,5 @@ fallback_version = "0.0.0"
 testpaths = ["tests"]
 
 [project.urls]
-Homepage = "https://github.com/lincolnloop/django-tasks-threadpool"
-Documentation = "https://lincolnloop.github.io/django-tasks-threadpool/"
+Homepage = "https://github.com/lincolnloop/django-tasks-local"
+Documentation = "https://lincolnloop.github.io/django-tasks-local/"

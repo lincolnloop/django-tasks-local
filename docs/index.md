@@ -1,19 +1,22 @@
-# django-tasks-threadpool
+# django-tasks-local
 
-A thread pool backend for Django 6's built-in tasks framework.
+Zero-infrastructure task backends for Django 6.
 
 ## Why?
 
 Django 6 ships with `ImmediateBackend` (blocks the request) and `DummyBackend` (does nothing).
 
-This backend provides **background execution with zero infrastructure**. Tasks run in a thread pool, freeing your request immediately.
+This package provides **background execution with zero infrastructure**:
 
-Ideal for development and low-volume production.
+- **ThreadPoolBackend** - Tasks run in a thread pool (best for I/O-bound work)
+- **ProcessPoolBackend** - Tasks run in a process pool (best for CPU-bound work)
+
+No Redis, Celery, or database required. Ideal for development and low-volume production.
 
 ## Installation
 
 ```bash
-pip install django-tasks-threadpool
+pip install django-tasks-local
 ```
 
 ## Quick Start
@@ -21,7 +24,7 @@ pip install django-tasks-threadpool
 ```python
 # settings.py
 TASKS = {
-    "default": {"BACKEND": "tasks_threadpool.ThreadPoolBackend"},
+    "default": {"BACKEND": "django_tasks_local.ThreadPoolBackend"},
 }
 ```
 
@@ -38,10 +41,18 @@ def send_welcome_email(user_id):
 send_welcome_email.enqueue(user.id)
 ```
 
+## Choosing a Backend
+
+| Use Case | Backend | Why |
+|----------|---------|-----|
+| Sending emails, API calls, database operations | `ThreadPoolBackend` | I/O-bound tasks benefit from threading |
+| Image processing, data analysis, PDF generation | `ProcessPoolBackend` | CPU-bound tasks need true parallelism (bypasses GIL) |
+
 ## Limitations
 
-- Results are stored in memory (lost on restart)
-- No scheduled/delayed execution (`supports_defer = False`)
-- No native async support (`supports_async_task = False`)
+- **In-memory only** - Results are lost on restart
+- **No scheduled execution** - `supports_defer = False`
+- **No priority** - Tasks execute in FIFO order
+- **No native async** - `supports_async_task = False`
 
 See [Gotchas](gotchas.md) for edge cases to be aware of.
