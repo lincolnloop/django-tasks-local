@@ -33,6 +33,26 @@ def my_task():
     # Use result_id for logging, progress tracking, etc.
 ```
 
+## Task Priority
+
+Tasks can specify a priority from -100 (lowest) to 100 (highest). Higher priority tasks are executed first when multiple tasks are queued:
+
+```python
+from django.tasks import task
+
+@task(priority=50)
+def high_priority_task():
+    ...
+
+@task(priority=-50)
+def low_priority_task():
+    ...
+
+@task  # Default priority is 0
+def normal_task():
+    ...
+```
+
 ## Retrieving Results
 
 ```python

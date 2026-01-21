@@ -15,6 +15,7 @@ A Django Tasks backend that executes tasks in a thread pool.
 | `supports_defer` | `False` | No scheduled/delayed execution |
 | `supports_async_task` | `False` | No native async support |
 | `supports_get_result` | `True` | Results can be retrieved by ID |
+| `supports_priority` | `True` | Tasks can specify priority (-100 to 100) |
 
 ### Methods
 

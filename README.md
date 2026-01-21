@@ -1,9 +1,5 @@
 # django-tasks-threadpool
 
-A thread pool backend for Django 6's built-in tasks framework.
-
-## Why?
-
 Django 6 ships with `ImmediateBackend` (blocks the request) and `DummyBackend` (does nothing).
 
 This backend provides **background execution with zero infrastructure**. Tasks run in a thread pool, freeing your request immediately.
