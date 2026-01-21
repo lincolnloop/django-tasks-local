@@ -13,10 +13,7 @@ for true background execution, plus Server-Sent Events for progress streaming.
 """
 
 import json
-import logging
 import time
-
-logging.basicConfig(level=logging.DEBUG)
 
 from django.core.cache import cache
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
@@ -31,7 +28,15 @@ app = Django(
             "BACKEND": "tasks_threadpool.ThreadPoolBackend",
             "OPTIONS": {"MAX_WORKERS": 4},
         }
-    }
+    },
+    LOGGING={
+        "version": 1,
+        "disable_existing_loggers": False,
+        "handlers": {
+            "console": {"class": "logging.StreamHandler"},
+        },
+        "root": {"handlers": ["console"], "level": "DEBUG"},
+    },
 )
 
 
@@ -99,12 +104,14 @@ def get_jobs_for_client(client_id):
                 enqueued_at = result.enqueued_at.timestamp()
             except TaskResultDoesNotExist:
                 enqueued_at = 0
-            jobs.append({
-                "id": job_id,
-                "progress": progress,
-                "status": status,
-                "enqueued_at": enqueued_at,
-            })
+            jobs.append(
+                {
+                    "id": job_id,
+                    "progress": progress,
+                    "status": status,
+                    "enqueued_at": enqueued_at,
+                }
+            )
     # Sort by enqueue time (oldest first)
     jobs.sort(key=lambda j: j["enqueued_at"])
     return jobs
