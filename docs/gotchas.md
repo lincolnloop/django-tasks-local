@@ -37,39 +37,3 @@ print(counter)       # Still 0 in parent
 ```
 
 This is by design - it's how multiprocessing works. Use a database or cache for shared state.
-
-## ContextVars in Child Threads
-
-If your task spawns additional threads, those threads won't inherit ContextVar values:
-
-```python
-from django.tasks import task
-from django_tasks_local import current_result_id
-import threading
-
-@task
-def my_task():
-    # Works - we're in the worker thread/process
-    result_id = current_result_id.get()  # ✓
-
-    def child_work():
-        # Fails - child thread has empty context
-        result_id = current_result_id.get()  # ✗ LookupError
-
-    t = threading.Thread(target=child_work)
-    t.start()
-```
-
-**Workaround:** Copy the context explicitly:
-
-```python
-import contextvars
-
-@task
-def my_task():
-    ctx = contextvars.copy_context()
-    t = threading.Thread(target=ctx.run, args=(child_work,))
-    t.start()
-```
-
-Most tasks don't spawn threads, so this rarely comes up.

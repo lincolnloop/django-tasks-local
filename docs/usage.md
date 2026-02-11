@@ -64,22 +64,6 @@ def process_image(image_path):
 | `MAX_WORKERS` | 10 | Number of threads/processes in the pool |
 | `MAX_RESULTS` | 1000 | Maximum results to keep (LRU eviction when exceeded) |
 
-## Accessing Task Result ID
-
-Tasks can access their own result ID via a context variable:
-
-```python
-from django.tasks import task
-from django_tasks_local import current_result_id
-
-@task
-def my_task():
-    result_id = current_result_id.get()
-    # Use for logging, progress tracking, etc.
-```
-
-This works in both ThreadPoolBackend and ProcessPoolBackend.
-
 ## Retrieving Results
 
 ```python

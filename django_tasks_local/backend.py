@@ -21,13 +21,12 @@ import logging
 import traceback
 import uuid
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
-from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
 from django.tasks import TaskResult, TaskResultStatus
 from django.tasks.backends.base import BaseTaskBackend
-from django.tasks.base import Task, TaskError
+from django.tasks.base import Task, TaskError, TaskContext
 from django.tasks.signals import task_enqueued, task_finished, task_started
 from django.tasks.exceptions import TaskResultDoesNotExist
 from django.utils.module_loading import import_string
@@ -35,9 +34,6 @@ from django.utils.json import normalize_json
 from .state import get_executor_state, shutdown_executor
 
 logger = logging.getLogger(__name__)
-
-# Context variable for tasks to access their own result ID
-current_result_id: ContextVar[str] = ContextVar("current_result_id")
 
 
 class PicklableTaskResult(TaskResult):
@@ -60,20 +56,20 @@ class PicklableTaskResult(TaskResult):
 def _execute_task(backend: type[BaseTaskBackend], task_result: PicklableTaskResult):
     """Execute task in worker thread/process.
 
-    Sets ContextVar for task access. Works in both backends:
-    - ThreadPoolExecutor: shared memory, ContextVar set in worker thread
-    - ProcessPoolExecutor: separate memory, ContextVar set in child process
-
     Must be module-level (not a method) for ProcessPoolExecutor pickling.
     """
-    token = current_result_id.set(task_result.id)
-    try:
-        task_started.send(backend, task_result=task_result)
-        return normalize_json(
-            task_result.task.call(*task_result.args, **task_result.kwargs)
+    task_started.send(backend, task_result=task_result)
+    if task_result.task.takes_context:
+        raw_return_value = task_result.task.call(
+            TaskContext(task_result=task_result),
+            *task_result.args,
+            **task_result.kwargs,
         )
-    finally:
-        current_result_id.reset(token)
+    else:
+        raw_return_value = task_result.task.call(
+            *task_result.args, **task_result.kwargs
+        )
+    return normalize_json(raw_return_value)
 
 
 class FuturesBackend(BaseTaskBackend):
@@ -224,6 +220,7 @@ class FuturesBackend(BaseTaskBackend):
             stored_result = self._state.results.get(result_id)
 
         if stored_result is None:
+            print(self._state)
             raise TaskResultDoesNotExist(result_id)
 
         # If future still in flight, determine current status
