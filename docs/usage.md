@@ -34,8 +34,6 @@ TASKS = {
 }
 ```
 
-**Note:** ProcessPoolBackend requires task arguments and return values to be [pickleable](https://docs.python.org/3/library/pickle.html#what-can-be-pickled-and-unpickled).
-
 ### Multiple Backends
 
 Route different tasks to different backends:

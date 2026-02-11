@@ -18,46 +18,6 @@ When `MAX_RESULTS` is exceeded, the oldest completed results are evicted. If you
 
 Tune `MAX_RESULTS` based on your needs, but remember it all lives in memory.
 
-## ProcessPoolBackend: Pickling Required
-
-ProcessPoolBackend uses Python's `ProcessPoolExecutor`, which requires all data crossing process boundaries to be [pickleable](https://docs.python.org/3/library/pickle.html#what-can-be-pickled-and-unpickled).
-
-**What must be pickleable:**
-
-- Task arguments
-- Task return values
-- Task functions (must be defined at module level)
-
-**Common unpickleable objects:**
-
-- Lambda functions
-- Nested functions (defined inside other functions)
-- Open file handles, database connections
-- Certain Django objects (QuerySets, etc.)
-
-```python
-# This will raise ValueError at enqueue time:
-backend.enqueue(my_task, args=(lambda x: x,))
-
-# This will fail when the task returns:
-@task
-def bad_task():
-    return lambda x: x  # Can't pickle lambda
-```
-
-**Workaround:** Pass IDs instead of objects, and fetch them inside the task:
-
-```python
-# Instead of passing the queryset:
-@task
-def process_users(user_ids):
-    users = User.objects.filter(id__in=user_ids)
-    ...
-
-# Enqueue with IDs
-process_users.enqueue(list(User.objects.values_list('id', flat=True)))
-```
-
 ## ProcessPoolBackend: No Shared State
 
 Each process has its own memory space. Global variables modified in a task won't affect the parent process:

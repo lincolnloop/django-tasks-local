@@ -105,9 +105,9 @@ def fail_with_runtime_error():
 
 
 @task
-def return_unpickleable():
-    """Task that returns something that can't be pickled."""
-    return lambda x: x  # lambdas can't be pickled
+def return_non_json():
+    """Task that returns something that can't be converted to JSON."""
+    return lambda x: x
 
 
 @pytest.fixture
@@ -373,9 +373,9 @@ class TestProcessPoolBackend:
         assert updated.status == TaskResultStatus.SUCCESSFUL
         assert updated.return_value == result.id
 
-    def test_rejects_unpickleable_args(self, process_backend):
-        """ProcessPoolBackend raises ValueError for unpickleable arguments."""
-        with pytest.raises(ValueError, match="pickleable"):
+    def test_rejects_non_json_args(self, process_backend):
+        """ProcessPoolBackend raises ValueError for arguments which cannot be serialized to JSON."""
+        with pytest.raises(TypeError, match="Unsupported type"):
             process_backend.enqueue(simple_task, args=(lambda: None,))
 
     def test_capability_flags(self, process_backend):
@@ -396,14 +396,13 @@ class TestProcessPoolBackend:
         assert "ValueError" in updated.errors[0].exception_class_path
         assert "intentional error" in updated.errors[0].traceback
 
-    def test_unpickleable_return_value(self, process_backend):
-        """ProcessPoolBackend handles unpickleable return values gracefully."""
-        result = process_backend.enqueue(return_unpickleable)
+    def test_non_json_return_value(self, process_backend):
+        """ProcessPoolBackend handles return values which cannot be converted to JSON gracefully."""
+        result = process_backend.enqueue(return_non_json)
         time.sleep(0.5)
 
         updated = process_backend.get_result(result.id)
-        # Task should fail because result can't be pickled back to main process
         assert updated.status == TaskResultStatus.FAILED
         assert len(updated.errors) == 1
-        # The error should mention pickling
-        assert "pickle" in updated.errors[0].traceback.lower()
+        # The error should mention a type error
+        assert "Unsupported type" in updated.errors[0].traceback

@@ -18,7 +18,6 @@ Usage in settings:
 """
 
 import logging
-import pickle
 import traceback
 import uuid
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
@@ -32,6 +31,7 @@ from django.tasks.base import Task, TaskError
 from django.tasks.signals import task_enqueued, task_finished, task_started
 from django.tasks.exceptions import TaskResultDoesNotExist
 from django.utils.module_loading import import_string
+from django.utils.json import normalize_json
 from .state import get_executor_state, shutdown_executor
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,9 @@ def _execute_task(backend: type[BaseTaskBackend], task_result: PicklableTaskResu
     token = current_result_id.set(task_result.id)
     try:
         task_started.send(backend, task_result=task_result)
-        return task_result.task.call(*task_result.args, **task_result.kwargs)
+        return normalize_json(
+            task_result.task.call(*task_result.args, **task_result.kwargs)
+        )
     finally:
         current_result_id.reset(token)
 
@@ -117,7 +119,6 @@ class FuturesBackend(BaseTaskBackend):
         to check for RUNNING, SUCCESSFUL, or FAILED status.
         """
         self.validate_task(task)
-        self._validate_pickleable(task, args, kwargs)
 
         result_id = str(uuid.uuid4())
 
@@ -251,10 +252,6 @@ class FuturesBackend(BaseTaskBackend):
 
         return stored_result
 
-    def _validate_pickleable(self, task: Task, args: tuple | None, kwargs: dict | None):
-        """Validate arguments can be pickled. Override in ProcessPoolBackend."""
-        pass
-
     def close(self) -> None:
         """Shutdown the shared executor.
 
@@ -281,17 +278,7 @@ class ProcessPoolBackend(FuturesBackend):
     Tasks run in a ProcessPoolExecutor, bypassing the GIL.
 
     Constraints:
-    - Task arguments and return values must be pickleable
     - No shared memory with main process (global state changes don't persist)
     """
 
     executor_class = ProcessPoolExecutor
-
-    def _validate_pickleable(self, task: Task, args: tuple | None, kwargs: dict | None):
-        """Fail fast if arguments can't be pickled."""
-        try:
-            pickle.dumps((args, kwargs))
-        except (pickle.PicklingError, TypeError, AttributeError) as e:
-            raise ValueError(
-                f"Task arguments must be pickleable for ProcessPoolBackend: {e}"
-            ) from e

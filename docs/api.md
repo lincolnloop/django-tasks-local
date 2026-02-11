@@ -20,8 +20,6 @@ from django_tasks_local import ProcessPoolBackend
 
 Executes tasks in a `ProcessPoolExecutor`. Best for CPU-bound tasks.
 
-**Constraint:** Arguments and return values must be pickleable.
-
 ## Backend Capabilities
 
 | Attribute | Value | Description |
@@ -39,7 +37,7 @@ Enqueue a task for background execution.
 
 **Returns:** `TaskResult` with initial status `READY`.
 
-**Raises:** `ValueError` if using ProcessPoolBackend with unpickleable arguments.
+**Raises:** `TypeError` if arguments cannot be converted to JSON.
 
 ### `get_result(result_id)`
 
