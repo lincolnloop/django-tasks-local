@@ -10,11 +10,9 @@ No Redis, Celery, or database required.
 from .backend import (
     ProcessPoolBackend,
     ThreadPoolBackend,
-    current_result_id,
 )
 
 __all__ = [
     "ThreadPoolBackend",
     "ProcessPoolBackend",
-    "current_result_id",
 ]

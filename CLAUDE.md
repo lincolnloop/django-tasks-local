@@ -53,9 +53,6 @@ uv run --group docs zensical build
   - `_on_complete()` callback handles task completion and LRU eviction
 - **ThreadPoolBackend**: Uses `ThreadPoolExecutor` for I/O-bound tasks
 - **ProcessPoolBackend**: Uses `ProcessPoolExecutor` for CPU-bound tasks
-  - Validates pickling of arguments upfront
-- **_execute_task()**: Module-level wrapper that sets ContextVar and invokes the task function
-- **current_result_id**: ContextVar allowing tasks to access their own result ID
 
 **Backend capabilities:**
 
@@ -68,7 +65,6 @@ uv run --group docs zensical build
 
 1. **Shared state registry**: Multiple backend instances with the same alias share executor and result storage via `ExecutorState`
 2. **Task status from Future**: READY/RUNNING determined by `Future.running()` at `get_result()` time
-3. **ContextVar in both backends**: Works by setting the ContextVar inside the worker thread/process
 4. **Function path resolution**: Tasks are imported by path string for ProcessPool pickling compatibility
 
 ## Key Limitation

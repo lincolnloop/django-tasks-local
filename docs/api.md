@@ -20,8 +20,6 @@ from django_tasks_local import ProcessPoolBackend
 
 Executes tasks in a `ProcessPoolExecutor`. Best for CPU-bound tasks.
 
-**Constraint:** Arguments and return values must be pickleable.
-
 ## Backend Capabilities
 
 | Attribute | Value | Description |
@@ -39,7 +37,7 @@ Enqueue a task for background execution.
 
 **Returns:** `TaskResult` with initial status `READY`.
 
-**Raises:** `ValueError` if using ProcessPoolBackend with unpickleable arguments.
+**Raises:** `TypeError` if arguments cannot be converted to JSON.
 
 ### `get_result(result_id)`
 
@@ -54,25 +52,3 @@ Retrieve a task result by its UUID string.
 Shut down the executor.
 
 **Warning:** This shuts down the executor for ALL backend instances using the same alias. Only call during application shutdown.
-
-## Context Variable
-
-### `current_result_id`
-
-```python
-from django_tasks_local import current_result_id
-```
-
-A `ContextVar[str]` holding the current task's result ID. Only available within a running task.
-
-```python
-from django.tasks import task
-from django_tasks_local import current_result_id
-
-@task
-def my_task():
-    result_id = current_result_id.get()
-    # Use for logging, caching progress, etc.
-```
-
-Works in both ThreadPoolBackend and ProcessPoolBackend.

@@ -20,7 +20,6 @@ from django.core.cache import cache
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.tasks import task
 
-from django_tasks_local import current_result_id
 from nanodjango import Django
 
 app = Django(
@@ -42,10 +41,10 @@ app = Django(
 
 
 # 1. The Background Task (using Django's @task decorator)
-@task
-def tough_job():
+@task(takes_context=True)
+def tough_job(context):
     """A long-running task that reports progress via cache."""
-    result_id = current_result_id.get()
+    result_id = context.task_result.id
     total_steps = 10
     for i in range(total_steps):
         time.sleep(1)

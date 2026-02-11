@@ -27,15 +27,14 @@ if not settings.configured:
     django.setup()
 
 import pytest
-from django.tasks import TaskResultStatus, task
+from django.tasks import TaskResultStatus, task, TaskContext
 from django.tasks.exceptions import TaskResultDoesNotExist
 
-from django_tasks_local import ThreadPoolBackend, ProcessPoolBackend, current_result_id
+from django_tasks_local import ThreadPoolBackend, ProcessPoolBackend
 from django_tasks_local.state import _executor_states
 
 # Module-level task functions (Django requirement)
 _received_args = {}
-_captured_result_id = {}
 
 
 @task
@@ -67,17 +66,6 @@ def fail():
 
 
 @task
-def capture_result_id():
-    _captured_result_id["id"] = current_result_id.get()
-
-
-@task
-def return_result_id():
-    """Return the current result ID (for cross-process testing)."""
-    return current_result_id.get()
-
-
-@task
 def quick():
     return True
 
@@ -105,9 +93,14 @@ def fail_with_runtime_error():
 
 
 @task
-def return_unpickleable():
-    """Task that returns something that can't be pickled."""
-    return lambda x: x  # lambdas can't be pickled
+def return_non_json():
+    """Task that returns something that can't be converted to JSON."""
+    return lambda x: x
+
+
+@task(takes_context=True)
+def get_task_id(context: TaskContext) -> str:
+    return context.task_result.id
 
 
 @pytest.fixture
@@ -133,7 +126,6 @@ def default_backend():
 def clear_globals():
     """Clear global state between tests."""
     _received_args.clear()
-    _captured_result_id.clear()
     # Clear shared executor states to ensure fresh state per test
     _executor_states.clear()
     yield
@@ -152,7 +144,7 @@ class TestBackendInitialization:
         """Backend advertises correct capabilities."""
         assert backend.supports_defer is False
         assert backend.supports_async_task is False
-        assert backend.supports_get_result is True
+        assert backend.supports_get_result is False
         assert backend.supports_priority is False
 
     def test_multiple_instances_share_state(self):
@@ -263,12 +255,10 @@ class TestTaskExecution:
         assert "ValueError" in updated.errors[0].exception_class_path
         assert "intentional error" in updated.errors[0].traceback
 
-    def test_current_result_id_context_var(self, backend):
-        """Task can access its own result ID via context variable."""
-        result = backend.enqueue(capture_result_id)
+    def test_task_context(self, backend):
+        result = backend.enqueue(get_task_id)
         time.sleep(0.1)
-
-        assert _captured_result_id["id"] == result.id
+        assert backend.get_result(result.id).return_value == result.id
 
 
 class TestGetResult:
@@ -361,28 +351,16 @@ class TestProcessPoolBackend:
         assert updated.status == TaskResultStatus.SUCCESSFUL
         assert updated.return_value == 5
 
-    def test_context_var_in_process(self, process_backend):
-        """ContextVar works in ProcessPoolBackend."""
-        # Note: We use return_result_id which returns the value rather
-        # than capture_result_id which stores in a global (globals don't
-        # cross process boundaries).
-        result = process_backend.enqueue(return_result_id)
-        time.sleep(0.5)
-
-        updated = process_backend.get_result(result.id)
-        assert updated.status == TaskResultStatus.SUCCESSFUL
-        assert updated.return_value == result.id
-
-    def test_rejects_unpickleable_args(self, process_backend):
-        """ProcessPoolBackend raises ValueError for unpickleable arguments."""
-        with pytest.raises(ValueError, match="pickleable"):
+    def test_rejects_non_json_args(self, process_backend):
+        """ProcessPoolBackend raises ValueError for arguments which cannot be serialized to JSON."""
+        with pytest.raises(TypeError, match="Unsupported type"):
             process_backend.enqueue(simple_task, args=(lambda: None,))
 
     def test_capability_flags(self, process_backend):
         """ProcessPoolBackend advertises correct capabilities."""
         assert process_backend.supports_defer is False
         assert process_backend.supports_async_task is False
-        assert process_backend.supports_get_result is True
+        assert process_backend.supports_get_result is False
         assert process_backend.supports_priority is False
 
     def test_failing_task(self, process_backend):
@@ -396,14 +374,13 @@ class TestProcessPoolBackend:
         assert "ValueError" in updated.errors[0].exception_class_path
         assert "intentional error" in updated.errors[0].traceback
 
-    def test_unpickleable_return_value(self, process_backend):
-        """ProcessPoolBackend handles unpickleable return values gracefully."""
-        result = process_backend.enqueue(return_unpickleable)
+    def test_non_json_return_value(self, process_backend):
+        """ProcessPoolBackend handles return values which cannot be converted to JSON gracefully."""
+        result = process_backend.enqueue(return_non_json)
         time.sleep(0.5)
 
         updated = process_backend.get_result(result.id)
-        # Task should fail because result can't be pickled back to main process
         assert updated.status == TaskResultStatus.FAILED
         assert len(updated.errors) == 1
-        # The error should mention pickling
-        assert "pickle" in updated.errors[0].traceback.lower()
+        # The error should mention a type error
+        assert "Unsupported type" in updated.errors[0].traceback
