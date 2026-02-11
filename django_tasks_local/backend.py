@@ -29,9 +29,9 @@ from typing import Any
 from django.tasks import TaskResult, TaskResultStatus
 from django.tasks.backends.base import BaseTaskBackend
 from django.tasks.base import Task, TaskError
+from django.tasks.signals import task_enqueued, task_finished, task_started
 from django.tasks.exceptions import TaskResultDoesNotExist
 from django.utils.module_loading import import_string
-
 from .state import get_executor_state, shutdown_executor
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,24 @@ logger = logging.getLogger(__name__)
 current_result_id: ContextVar[str] = ContextVar("current_result_id")
 
 
-def _execute_task(func_path: str, args: tuple, kwargs: dict, result_id: str):
+class PicklableTaskResult(TaskResult):
+    """
+    A modified TaskResult which smuggles the Task instance as a string when pickled.
+    """
+
+    def __getstate__(self):
+        state = super().__getstate__()
+        assert isinstance(state[0], Task)
+        state[0] = state[0].module_path
+        return state
+
+    def __setstate__(self, state):
+        state[0] = import_string(state[0])
+        assert isinstance(state[0], Task)
+        return super().__setstate__(state)
+
+
+def _execute_task(backend: type[BaseTaskBackend], task_result: PicklableTaskResult):
     """Execute task in worker thread/process.
 
     Sets ContextVar for task access. Works in both backends:
@@ -49,12 +66,10 @@ def _execute_task(func_path: str, args: tuple, kwargs: dict, result_id: str):
 
     Must be module-level (not a method) for ProcessPoolExecutor pickling.
     """
-    token = current_result_id.set(result_id)
+    token = current_result_id.set(task_result.id)
     try:
-        obj = import_string(func_path)
-        # If it's a Task wrapper, get the underlying function
-        func = getattr(obj, "func", obj)
-        return func(*args, **kwargs)
+        task_started.send(backend, task_result=task_result)
+        return task_result.task.call(*task_result.args, **task_result.kwargs)
     finally:
         current_result_id.reset(token)
 
@@ -105,11 +120,10 @@ class FuturesBackend(BaseTaskBackend):
         self._validate_pickleable(task, args, kwargs)
 
         result_id = str(uuid.uuid4())
-        func_path = f"{task.func.__module__}.{task.func.__qualname__}"
 
         # Store initial result before submitting (for immediate get_result calls)
         now = datetime.now(timezone.utc)
-        initial_result = TaskResult(
+        initial_result = PicklableTaskResult(
             id=result_id,
             task=task,
             status=TaskResultStatus.READY,
@@ -128,9 +142,7 @@ class FuturesBackend(BaseTaskBackend):
             self._state.results[result_id] = initial_result
 
         # Submit to executor
-        future = self._state.executor.submit(
-            _execute_task, func_path, args or (), kwargs or {}, result_id
-        )
+        future = self._state.executor.submit(_execute_task, type(self), initial_result)
 
         with self._state.lock:
             self._state.futures[result_id] = future
@@ -140,11 +152,7 @@ class FuturesBackend(BaseTaskBackend):
             lambda f: self._on_complete(result_id, task, initial_result, f)
         )
 
-        logger.debug(
-            "Task '%s' enqueued: result_id=%s",
-            task.name,
-            result_id,
-        )
+        task_enqueued.send(type(self), task_result=initial_result)
 
         return initial_result
 
@@ -152,50 +160,44 @@ class FuturesBackend(BaseTaskBackend):
         self,
         result_id: str,
         task: Task,
-        initial_result: TaskResult,
+        initial_result: PicklableTaskResult,
         future: Future,
     ) -> None:
         """Called when future completes. Runs in parent process/thread."""
         finished_at = datetime.now(timezone.utc)
 
+        final_result = TaskResult(
+            id=result_id,
+            task=task,
+            status=TaskResultStatus.SUCCESSFUL,
+            enqueued_at=initial_result.enqueued_at,
+            started_at=initial_result.enqueued_at,  # Approximation
+            finished_at=finished_at,
+            last_attempted_at=initial_result.enqueued_at,
+            args=initial_result.args,
+            kwargs=initial_result.kwargs,
+            backend=self.alias,
+            errors=[],
+            worker_ids=[],
+        )
+
         try:
-            return_value = future.result()
-            final_result = TaskResult(
-                id=result_id,
-                task=task,
-                status=TaskResultStatus.SUCCESSFUL,
-                enqueued_at=initial_result.enqueued_at,
-                started_at=initial_result.enqueued_at,  # Approximation
-                finished_at=finished_at,
-                last_attempted_at=initial_result.enqueued_at,
-                args=initial_result.args,
-                kwargs=initial_result.kwargs,
-                backend=self.alias,
-                errors=[],
-                worker_ids=[],
-            )
             # TaskResult is frozen, use object.__setattr__ to set _return_value
-            object.__setattr__(final_result, "_return_value", return_value)
+            object.__setattr__(final_result, "_return_value", future.result())
         except Exception as e:
-            logger.exception("Task %s failed: %s", task.name, e)
-            error = TaskError(
-                exception_class_path=f"{type(e).__module__}.{type(e).__qualname__}",
-                traceback=traceback.format_exc(),
+            final_result.errors.append(
+                TaskError(
+                    exception_class_path=f"{type(e).__module__}.{type(e).__qualname__}",
+                    traceback=traceback.format_exc(),
+                )
             )
-            final_result = TaskResult(
-                id=result_id,
-                task=task,
-                status=TaskResultStatus.FAILED,
-                enqueued_at=initial_result.enqueued_at,
-                started_at=initial_result.enqueued_at,
-                finished_at=finished_at,
-                last_attempted_at=initial_result.enqueued_at,
-                args=initial_result.args,
-                kwargs=initial_result.kwargs,
-                backend=self.alias,
-                errors=[error],
-                worker_ids=[],
-            )
+
+            object.__setattr__(final_result, "status", TaskResultStatus.FAILED)
+
+            # Called inside the exception handler so the signal can access the exception
+            task_finished.send(type(self), task_result=final_result)
+        else:
+            task_finished.send(type(self), task_result=final_result)
 
         with self._state.lock:
             self._state.results[result_id] = final_result
