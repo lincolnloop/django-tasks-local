@@ -46,4 +46,4 @@ send_welcome_email.enqueue(user.id)
 - **No scheduling** - `supports_defer = False`
 - **No priority** - FIFO execution
 
-For persistence, see [django-tasks](https://pypi.org/project/django-tasks/) which provides `DatabaseBackend` and `RQBackend`.
+For persistence, see [django-tasks-db](https://pypi.org/project/django-tasks-db/) or [django-tasks-rq](https://pypi.org/project/django-tasks-rq/)
