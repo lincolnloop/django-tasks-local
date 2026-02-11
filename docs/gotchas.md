@@ -10,7 +10,8 @@ All task results and the pending task queue exist only in memory. When your proc
 - All completed task results are gone
 - There's no way to recover them
 
-This package is designed for development and low-volume production where losing tasks on restart is acceptable. If you need persistence, use [django-tasks](https://pypi.org/project/django-tasks/) with `DatabaseBackend` or `RQBackend`.
+This package is designed for development and low-volume production where losing tasks on restart is acceptable. For persistence, see [django-tasks-db](https://pypi.org/project/django-tasks-db/) or [django-tasks-rq](https://pypi.org/project/django-tasks-rq/).
+
 
 ## LRU Eviction
 
