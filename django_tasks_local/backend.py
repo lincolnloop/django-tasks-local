@@ -53,11 +53,12 @@ class PicklableTaskResult(TaskResult):
         return super().__setstate__(state)
 
 
-def _execute_task(backend: type[BaseTaskBackend], task_result: PicklableTaskResult):
+def _execute_task(backend: type[BaseTaskBackend], name: str, task_result: PicklableTaskResult):
     """Execute task in worker thread/process.
 
     Must be module-level (not a method) for ProcessPoolExecutor pickling.
     """
+    task_result.worker_ids.append(name)
     task_started.send(backend, task_result=task_result)
     if task_result.task.takes_context:
         raw_return_value = task_result.task.call(
@@ -139,7 +140,7 @@ class FuturesBackend(BaseTaskBackend):
             self._state.results[result_id] = initial_result
 
         # Submit to executor
-        future = self._state.executor.submit(_execute_task, type(self), initial_result)
+        future = self._state.executor.submit(_execute_task, type(self), self._name, initial_result)
 
         with self._state.lock:
             self._state.futures[result_id] = future
@@ -175,7 +176,7 @@ class FuturesBackend(BaseTaskBackend):
             kwargs=initial_result.kwargs,
             backend=self.alias,
             errors=[],
-            worker_ids=[],
+            worker_ids=[self._name],
         )
 
         try:
@@ -244,7 +245,7 @@ class FuturesBackend(BaseTaskBackend):
                 kwargs=stored_result.kwargs,
                 backend=self.alias,
                 errors=[],
-                worker_ids=[],
+                worker_ids=[self._name],
             )
 
         return stored_result
