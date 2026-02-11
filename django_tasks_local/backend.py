@@ -79,7 +79,7 @@ class FuturesBackend(BaseTaskBackend):
 
     supports_defer = False
     supports_async_task = False
-    supports_get_result = True
+    supports_get_result = False
     supports_priority = False
 
     executor_class: type = None  # Subclasses must set

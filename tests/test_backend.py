@@ -152,7 +152,7 @@ class TestBackendInitialization:
         """Backend advertises correct capabilities."""
         assert backend.supports_defer is False
         assert backend.supports_async_task is False
-        assert backend.supports_get_result is True
+        assert backend.supports_get_result is False
         assert backend.supports_priority is False
 
     def test_multiple_instances_share_state(self):
@@ -382,7 +382,7 @@ class TestProcessPoolBackend:
         """ProcessPoolBackend advertises correct capabilities."""
         assert process_backend.supports_defer is False
         assert process_backend.supports_async_task is False
-        assert process_backend.supports_get_result is True
+        assert process_backend.supports_get_result is False
         assert process_backend.supports_priority is False
 
     def test_failing_task(self, process_backend):
